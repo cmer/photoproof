@@ -61,21 +61,58 @@ PhotoProof only reads from Immich. It never creates, modifies, or deletes anythi
 
 ---
 
+## Install
+
+Download the latest `PhotoProof-<version>.zip` from the [Releases page](https://github.com/cmer/photoproof/releases), unzip it, and drag `PhotoProof.app` into `/Applications`.
+
+### First-launch Gatekeeper warning
+
+PhotoProof is signed locally (ad-hoc) but **not** notarized by Apple, so macOS Gatekeeper will block the first launch. This is a one-time prompt — once approved, the app launches normally forever after.
+
+**macOS 14 (Sonoma):**
+1. Right-click `PhotoProof.app` → **Open**.
+2. Click **Open** in the warning dialog.
+
+**macOS 15 (Sequoia) and newer:**
+Apple tightened Gatekeeper, so right-click → Open no longer works. Instead:
+1. Double-click `PhotoProof.app`. macOS will refuse to launch it.
+2. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the "PhotoProof was blocked…" message.
+3. Try opening the app again and confirm in the prompt.
+
+**Power-user shortcut** — strip the quarantine flag from a Terminal so the app launches normally with no further prompts:
+
+```sh
+xattr -d com.apple.quarantine /Applications/PhotoProof.app
+```
+
+If you'd prefer no warning at all, the alternative is to build PhotoProof yourself (see below) — locally compiled apps don't carry the quarantine attribute.
+
+---
+
 ## Build & run
 
-```bash
-git clone <this repo>
+Two scripts in `scripts/` cover day-to-day building:
+
+```sh
+./scripts/build-dev.sh    # Debug build, ad-hoc signed, auto-launches the app
+./scripts/build-prod.sh   # Release build, copies to ./build/PhotoProof.app
+```
+
+Or open the project in Xcode and use ⌘R:
+
+```sh
+git clone https://github.com/cmer/photoproof.git
 cd photoproof
 open PhotoProof.xcodeproj
 ```
 
-Then ⌘R in Xcode. There are no SPM dependencies — everything is in-house.
+There are no SPM dependencies — everything is in-house.
 
 If `xcodebuild` complains about `IDESimulatorFoundation` failing to load, run `sudo xcodebuild -runFirstLaunch` once.
 
 To regenerate the app icon:
 
-```bash
+```sh
 swift tools/generate_icon.swift
 ```
 
