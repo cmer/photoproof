@@ -67,25 +67,17 @@ Download the latest `PhotoProof-<version>.zip` from the [Releases page](https://
 
 ### First-launch Gatekeeper warning
 
-PhotoProof is signed locally (ad-hoc) but **not** notarized by Apple, so macOS Gatekeeper will block the first launch. This is a one-time prompt — once approved, the app launches normally forever after.
+PhotoProof is **ad-hoc signed**, not notarized by Apple. When you download a release through a browser, macOS adds a quarantine attribute and Gatekeeper refuses to launch the app — usually with the misleading message *"PhotoProof is damaged and can't be opened. You should move it to the Trash."* The app isn't actually damaged. macOS just won't run an ad-hoc-signed download without you explicitly approving it.
 
-**macOS 14 (Sonoma):**
-1. Right-click `PhotoProof.app` → **Open**.
-2. Click **Open** in the warning dialog.
-
-**macOS 15 (Sequoia) and newer:**
-Apple tightened Gatekeeper, so right-click → Open no longer works. Instead:
-1. Double-click `PhotoProof.app`. macOS will refuse to launch it.
-2. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the "PhotoProof was blocked…" message.
-3. Try opening the app again and confirm in the prompt.
-
-**Power-user shortcut** — strip the quarantine flag from a Terminal so the app launches normally with no further prompts:
+**Fix**: open Terminal and strip the quarantine attribute. Replace the path with wherever your `.app` lives (`~/Downloads/PhotoProof.app`, `/Applications/PhotoProof.app`, etc.):
 
 ```sh
-xattr -d com.apple.quarantine /Applications/PhotoProof.app
+xattr -dr com.apple.quarantine /Applications/PhotoProof.app
 ```
 
-If you'd prefer no warning at all, the alternative is to build PhotoProof yourself (see below) — locally compiled apps don't carry the quarantine attribute.
+Then double-click the app. It'll launch normally and Gatekeeper won't bother you again.
+
+> Why doesn't right-click → Open work? That flow is for apps signed with a real Apple Developer ID but not notarized. Ad-hoc signing has no Developer ID to evaluate, so Gatekeeper doesn't offer the bypass — the `xattr` path is the only one. Building from source (see below) avoids the issue entirely, since locally compiled apps don't carry the quarantine flag.
 
 ---
 
