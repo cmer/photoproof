@@ -17,6 +17,9 @@ struct PhotoProofApp: App {
                     HistoryView()
                         .frame(minWidth: 560, minHeight: 360)
                 }
+                .sheet(isPresented: $appState.showEmptyAlbums) {
+                    EmptyAlbumsView()
+                }
         }
         .windowResizability(.contentSize)
         .commands {
@@ -37,6 +40,13 @@ struct PhotoProofApp: App {
                 }
                 .keyboardShortcut("y", modifiers: .command)
                 .disabled(!appState.isConfigured)
+            }
+            CommandMenu("Library") {
+                Button("Manage Empty Albums…") {
+                    appState.showEmptyAlbums = true
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!appState.photosAccessGranted)
             }
         }
     }

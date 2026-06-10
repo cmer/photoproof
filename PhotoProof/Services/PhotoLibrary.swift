@@ -16,6 +16,14 @@ final class PhotoLibrary: ObservableObject {
 
     private init() {}
 
+    var emptyAlbums: [AlbumSummary] {
+        albums.filter { $0.isEmpty && $0.isDeletable }
+    }
+
+    var emptyAlbumCount: Int {
+        emptyAlbums.count
+    }
+
     func start() async {
         if observer == nil {
             let obs = ChangeObserver { [weak self] in
@@ -63,7 +71,9 @@ final class PhotoLibrary: ObservableObject {
                 id: collection.localIdentifier,
                 title: collection.localizedTitle ?? "Untitled",
                 photoCount: photos,
-                videoCount: videos
+                videoCount: videos,
+                assetCount: assets.count,
+                isDeletable: collection.canPerform(.delete)
             ))
         }
 

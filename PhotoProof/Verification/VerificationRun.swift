@@ -334,19 +334,8 @@ final class VerificationRun: ObservableObject {
         guard albumIsEmpty, albumDeleteState == .idle else { return }
         albumDeleteState = .deleting
 
-        let collFetch = PHAssetCollection.fetchAssetCollections(
-            withLocalIdentifiers: [album.id],
-            options: nil
-        )
-        guard let collection = collFetch.firstObject else {
-            albumDeleteState = .failed("The album is no longer available.")
-            return
-        }
-
         do {
-            try await PHPhotoLibrary.shared().performChanges {
-                PHAssetCollectionChangeRequest.deleteAssetCollections([collection] as NSArray)
-            }
+            try await PhotoAlbumManager.deleteEmptyAlbum(localIdentifier: album.id)
             albumDeleteState = .deleted
             albumIsEmpty = false
         } catch {
