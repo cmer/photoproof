@@ -20,6 +20,19 @@ The workflow is intentionally simple:
 
 PhotoProof never permanently deletes anything. Everything moved is recoverable from Photos → Recently Deleted for 30 days.
 
+### Managing empty albums
+
+PhotoProof keeps empty albums out of the verification picker. When it finds
+deletable, user-created albums with no photos or videos, a compact notice
+appears below the picker. Click **Review…**, select individual albums or use
+**Select All**, then confirm the deletion.
+
+The same screen is available from **Library → Manage Empty Albums…**. Before
+deleting each album, PhotoProof re-fetches it and confirms that it still
+exists, is still empty, and can still be deleted. Albums that no longer pass
+those checks are skipped and reported. Deleting an album never deletes photos
+or videos, but the album deletion is synchronized through iCloud Photos.
+
 ### Building a staging album from filters
 
 If you don't already have an album of candidates, click **Find photos to clean up…** under the album picker. PhotoProof opens a sheet where you can:
@@ -157,6 +170,7 @@ PhotoProof/
 │   ├── KeychainStore.swift       — generic password in the login keychain
 │   ├── ImmichClient.swift        — /users/me, bulk-upload-check, search/metadata, retries
 │   ├── PhotoLibrary.swift        — fetches user-created albums, observes library changes
+│   ├── PhotoAlbumManager.swift   — validates and deletes empty user-created albums
 │   ├── AssetExporter.swift       — writes asset bytes to a temp file for QuickLook
 │   ├── AssetThumbnailer.swift    — PHCachingImageManager wrapper for the grid
 │   ├── CSVExporter.swift         — writes CLI-compatible CSV reports
@@ -173,6 +187,7 @@ PhotoProof/
 │   ├── OnboardingView.swift      — Photos permission flow
 │   ├── SettingsView.swift        — server URL + API key + Test Connection
 │   ├── MainView.swift            — album picker, summary card, Verify button
+│   ├── EmptyAlbumsView.swift     — selects and deletes empty Photos albums
 │   ├── RunSheetView.swift        — three-stage progress + results + delete + success
 │   ├── FindCandidatesView.swift  — filter sheet for building a staging album
 │   ├── HistoryView.swift         — past run logs

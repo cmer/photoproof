@@ -16,7 +16,11 @@ struct MainView: View {
 
     private var selectedAlbum: AlbumSummary? {
         guard let id = selectedAlbumID else { return nil }
-        return library.albums.first(where: { $0.id == id })
+        return verificationAlbums.first(where: { $0.id == id })
+    }
+
+    private var verificationAlbums: [AlbumSummary] {
+        library.albums.filter { !$0.isEmpty }
     }
 
     var body: some View {
@@ -48,20 +52,20 @@ struct MainView: View {
         .task { await library.start() }
         .onChange(of: library.albums) { _, _ in
             // Drop a stale selection if the album disappeared.
-            if let id = selectedAlbumID, !library.albums.contains(where: { $0.id == id }) {
+            if let id = selectedAlbumID, !verificationAlbums.contains(where: { $0.id == id }) {
                 selectedAlbumID = nil
             }
             // If we just created a candidates album, select it once the
             // change observer has caught up.
             if let pending = pendingAlbumIDFromCandidates,
-               library.albums.contains(where: { $0.id == pending }) {
+               verificationAlbums.contains(where: { $0.id == pending }) {
                 selectedAlbumID = pending
                 pendingAlbumIDFromCandidates = nil
             }
             // Apply the remembered default album once the list has loaded.
             if selectedAlbumID == nil,
                let defaultID = appState.defaultAlbumID,
-               library.albums.contains(where: { $0.id == defaultID }) {
+               verificationAlbums.contains(where: { $0.id == defaultID }) {
                 selectedAlbumID = defaultID
             }
         }
@@ -156,16 +160,16 @@ struct MainView: View {
                 .font(.headline)
 
             HStack(spacing: 10) {
-                if library.isLoading && library.albums.isEmpty {
+                if library.isLoading && verificationAlbums.isEmpty {
                     ProgressView().controlSize(.small)
                     Text("Loading albums…").foregroundStyle(.secondary)
-                } else if library.albums.isEmpty {
-                    Text("No user-created albums found.")
+                } else if verificationAlbums.isEmpty {
+                    Text("No albums with photos or videos found.")
                         .foregroundStyle(.secondary)
                 } else {
                     Picker("Album", selection: $selectedAlbumID) {
                         Text("Choose an album…").tag(String?.none)
-                        ForEach(library.albums) { album in
+                        ForEach(verificationAlbums) { album in
                             Text("\(album.title) · \(album.totalCount)")
                                 .tag(Optional(album.id))
                         }
@@ -192,6 +196,21 @@ struct MainView: View {
             }
             .buttonStyle(.link)
             .help("Filter your library by age and size, then bundle the matches into a new album.")
+
+            if library.emptyAlbumCount > 0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.stack.badge.minus")
+                        .foregroundStyle(.secondary)
+                    Text("\(library.emptyAlbumCount) empty album\(library.emptyAlbumCount == 1 ? "" : "s") found")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Review…") {
+                        appState.showEmptyAlbums = true
+                    }
+                    .buttonStyle(.link)
+                }
+                .padding(.top, 4)
+            }
         }
     }
 

@@ -10,8 +10,11 @@ struct AlbumSummary: Identifiable, Hashable, Sendable {
     let title: String
     let photoCount: Int
     let videoCount: Int
+    let assetCount: Int
+    let isDeletable: Bool
 
-    var totalCount: Int { photoCount + videoCount }
+    var totalCount: Int { assetCount }
+    var isEmpty: Bool { assetCount == 0 }
 }
 
 /// Scanner metadata about a single PHAsset — enough to render results

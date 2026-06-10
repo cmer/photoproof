@@ -12,6 +12,7 @@ final class AppState: ObservableObject {
     @Published var connectedUser: ConnectedUser?
     @Published var showSettings: Bool = false
     @Published var showHistory: Bool = false
+    @Published var showEmptyAlbums: Bool = false
     @Published var defaultAlbumID: String?
 
     private static let serverURLKey = "PhotoProof.ImmichServerURL"
