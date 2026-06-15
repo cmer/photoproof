@@ -1,0 +1,6 @@
+{
+  "scripts": {
+    "run": "./scripts/run-conductor.sh"
+  },
+  "runScriptMode": "nonconcurrent"
+}
