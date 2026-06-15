@@ -1,22 +1,21 @@
 // MainView.swift
-// Album picker + summary card + Verify button. Once a verification run is
-// kicked off, presents RunSheetView as a modal until the user dismisses it.
+// Cleanup dashboard that makes smart candidate search the primary workflow and
+// keeps verification of an existing Photos album as a secondary action.
 
 import SwiftUI
 
 struct MainView: View {
-    @EnvironmentObject var appState: AppState
+    @EnvironmentObject private var appState: AppState
     @StateObject private var library = PhotoLibrary.shared
 
     @State private var selectedAlbumID: String?
     @State private var run: VerificationRun?
-    @State private var tipDismissed: Bool = UserDefaults.standard.bool(forKey: "PhotoProof.TipDismissed")
-    @State private var showFindCandidates: Bool = false
-    @State private var pendingAlbumIDFromCandidates: String?
+    @State private var showFindCandidates = false
+    @State private var showExistingAlbum = false
 
     private var selectedAlbum: AlbumSummary? {
-        guard let id = selectedAlbumID else { return nil }
-        return verificationAlbums.first(where: { $0.id == id })
+        guard let selectedAlbumID else { return nil }
+        return verificationAlbums.first { $0.id == selectedAlbumID }
     }
 
     private var verificationAlbums: [AlbumSummary] {
@@ -24,252 +23,262 @@ struct MainView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            connectionHeader
-            Divider()
+        ZStack {
+            PhotoProofBackdrop()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !tipDismissed {
-                        tipBanner
+            VStack(spacing: 0) {
+                appBar
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        hero
+                        primaryAction
+                        existingAlbumAction
+                        safetyFooter
                     }
-
-                    albumPickerSection
-
-                    if let album = selectedAlbum {
-                        summaryCard(album)
-                    }
-
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: 980)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 20)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(20)
             }
-
-            Divider()
-            verifyBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await library.start() }
-        .onChange(of: library.albums) { _, _ in
-            // Drop a stale selection if the album disappeared.
-            if let id = selectedAlbumID, !verificationAlbums.contains(where: { $0.id == id }) {
-                selectedAlbumID = nil
-            }
-            // If we just created a candidates album, select it once the
-            // change observer has caught up.
-            if let pending = pendingAlbumIDFromCandidates,
-               verificationAlbums.contains(where: { $0.id == pending }) {
-                selectedAlbumID = pending
-                pendingAlbumIDFromCandidates = nil
-            }
-            // Apply the remembered default album once the list has loaded.
-            if selectedAlbumID == nil,
-               let defaultID = appState.defaultAlbumID,
-               verificationAlbums.contains(where: { $0.id == defaultID }) {
-                selectedAlbumID = defaultID
-            }
-        }
+        .onChange(of: library.albums) { _, _ in reconcileAlbumSelection() }
         .onChange(of: selectedAlbumID) { _, newValue in
-            // Persist the user's pick so next launch lands on the same album.
             if let newValue {
                 appState.setDefaultAlbumID(newValue)
             }
         }
-        .sheet(item: $run, onDismiss: handleRunDismiss) { run in
-            RunSheetView(run: run) { self.run = nil }
-                .frame(minWidth: 640, minHeight: 480)
-        }
         .sheet(isPresented: $showFindCandidates) {
             FindCandidatesView { newAlbumID in
-                // The PhotoLibrary change observer fires when the new album
-                // is committed; the .onChange handler above selects it then.
-                pendingAlbumIDFromCandidates = newAlbumID
+                appState.setDefaultAlbumID(newAlbumID)
                 Task { await library.reload() }
             }
+            .environmentObject(appState)
+        }
+        .sheet(item: $run, onDismiss: handleRunDismiss) { run in
+            RunSheetView(run: run) { self.run = nil }
+                .frame(minWidth: 760, minHeight: 600)
         }
     }
 
-    // MARK: - Header
-
-    private var connectionHeader: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.shield.fill")
-                .foregroundStyle(.green)
-            if let user = appState.connectedUser {
-                Text("Connected to Immich as ")
-                    .foregroundStyle(.secondary)
-                + Text(user.email).bold()
+    private var appBar: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                PhotoProofStyle.heroGradient
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
             }
-            Spacer()
-            Button {
-                appState.showHistory = true
-            } label: {
-                Label("History", systemImage: "clock.arrow.circlepath")
-            }
-            .help("Verification history (⌘Y)")
-            .accessibilityLabel("Verification history")
-            .keyboardShortcut("y", modifiers: .command)
-            Button {
-                appState.showSettings = true
-            } label: {
-                Label("Settings", systemImage: "gear")
-            }
-            .help("Settings (⌘,)")
-            .accessibilityLabel("Settings")
-            .keyboardShortcut(",", modifiers: .command)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
+            .frame(width: 38, height: 38)
+            .clipShape(RoundedRectangle(cornerRadius: 11))
+            .shadow(color: PhotoProofStyle.accent.opacity(0.25), radius: 8, y: 4)
 
-    // MARK: - Tip
-
-    private var tipBanner: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "lightbulb")
-                .foregroundStyle(.tint)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("How it works")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("PhotoProof")
                     .font(.headline)
-                Text("Create an album in Photos (e.g. \u{201C}To Delete\u{201D}) and drag in any photos you'd like to remove. PhotoProof will check them against Immich and tell you which are safe to delete.")
+                Text("Free space in Apple Photos")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
+
             Spacer()
-            Button {
-                tipDismissed = true
-                UserDefaults.standard.set(true, forKey: "PhotoProof.TipDismissed")
-            } label: {
-                Image(systemName: "xmark")
+
+            if let user = appState.connectedUser {
+                ProofPill(
+                    title: user.name.isEmpty ? user.email : user.name,
+                    systemName: "checkmark.circle.fill",
+                    color: PhotoProofStyle.mint
+                )
+                .help("Connected to Immich as \(user.email)")
             }
-            .buttonStyle(.borderless)
-            .help("Dismiss")
-            .accessibilityLabel("Dismiss tip")
+
+            HeaderIconControl(systemName: "clock.arrow.circlepath", label: "Verification history") {
+                appState.showHistory = true
+            }
+
+            HeaderIconControl(systemName: "slider.horizontal.3", label: "Settings") {
+                appState.showSettings = true
+            }
         }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.07))
+                .frame(height: 1)
+        }
     }
 
-    // MARK: - Album picker
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Free up space in Apple Photos")
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .tracking(-0.8)
 
-    private var albumPickerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Album")
-                .font(.headline)
+            Text("Find large items, prove they're backed up in Immich, then remove them from Apple Photos and iCloud Photos.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 700, alignment: .leading)
+        }
+        .padding(.bottom, 2)
+    }
 
-            HStack(spacing: 10) {
-                if library.isLoading && verificationAlbums.isEmpty {
-                    ProgressView().controlSize(.small)
-                    Text("Loading albums…").foregroundStyle(.secondary)
-                } else if verificationAlbums.isEmpty {
-                    Text("No albums with photos or videos found.")
+    private var primaryAction: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 16) {
+                ProofIcon(systemName: "sparkle.magnifyingglass", color: PhotoProofStyle.accent, size: 52)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Start a cleanup")
+                        .font(.system(.title, design: .rounded, weight: .bold))
+
+                    Text("Review matches first. PhotoProof creates the cleanup album automatically, then verifies what is safe to remove.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                } else {
-                    Picker("Album", selection: $selectedAlbumID) {
-                        Text("Choose an album…").tag(String?.none)
-                        ForEach(verificationAlbums) { album in
-                            Text("\(album.title) · \(album.totalCount)")
-                                .tag(Optional(album.id))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 680, alignment: .leading)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            Button {
+                showFindCandidates = true
+            } label: {
+                Label("Find items to delete", systemImage: "arrow.right")
+                    .font(.headline)
+                    .padding(.horizontal, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(PhotoProofStyle.accent)
+            .keyboardShortcut(.defaultAction)
+        }
+        .proofSurface(padding: 24, cornerRadius: 24)
+    }
+
+    private var existingAlbumAction: some View {
+        DisclosureGroup(isExpanded: $showExistingAlbum) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    if library.isLoading && verificationAlbums.isEmpty {
+                        ProgressView().controlSize(.small)
+                        Text("Loading Photos albums...")
+                            .foregroundStyle(.secondary)
+                    } else if verificationAlbums.isEmpty {
+                        Text("No albums with photos or videos found.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Photos album", selection: $selectedAlbumID) {
+                            Text("Choose an album...").tag(String?.none)
+                            ForEach(verificationAlbums) { album in
+                                Text("\(album.title)  ·  \(album.totalCount) items")
+                                    .tag(Optional(album.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 440)
+
+                        if let selectedAlbum {
+                            Text(selectedAlbumSummary(selectedAlbum))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 360)
+
+                    Spacer()
 
                     Button {
                         Task { await library.reload() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(.borderless)
+                    .disabled(library.isLoading)
                     .help("Refresh albums")
-                    .accessibilityLabel("Refresh albums")
+
+                    Button {
+                        startRun()
+                    } label: {
+                        Label("Verify album", systemImage: "checkmark.seal")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedAlbum == nil)
                 }
-                Spacer()
-            }
 
-            Button {
-                showFindCandidates = true
-            } label: {
-                Label("Find photos to clean up…", systemImage: "sparkle.magnifyingglass")
-                    .font(.callout)
-            }
-            .buttonStyle(.link)
-            .help("Filter your library by age and size, then bundle the matches into a new album.")
-
-            if library.emptyAlbumCount > 0 {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.stack.badge.minus")
-                        .foregroundStyle(.secondary)
-                    Text("\(library.emptyAlbumCount) empty album\(library.emptyAlbumCount == 1 ? "" : "s") found")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button("Review…") {
+                if library.emptyAlbumCount > 0 {
+                    Button {
                         appState.showEmptyAlbums = true
+                    } label: {
+                        Label(
+                            "Review \(library.emptyAlbumCount) empty album\(library.emptyAlbumCount == 1 ? "" : "s")",
+                            systemImage: "rectangle.stack.badge.minus"
+                        )
                     }
                     .buttonStyle(.link)
+                    .font(.callout)
                 }
-                .padding(.top, 4)
+            }
+            .padding(.top, 12)
+        } label: {
+            HStack(spacing: 12) {
+                ProofIcon(systemName: "rectangle.stack", color: .secondary, size: 34)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Use an existing Photos album")
+                        .font(.headline)
+                    Text("For albums you already prepared.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
         }
+        .proofSurface(padding: 18)
     }
 
-    // MARK: - Summary card
-
-    private func summaryCard(_ album: AlbumSummary) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: "photo.stack")
-                .font(.system(size: 28))
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(album.title).font(.title3.bold())
-                Text(formatCounts(album))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+    private var safetyFooter: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield.fill")
+                .foregroundStyle(PhotoProofStyle.mint)
+            Text("Only Immich-verified originals can be moved to Photos' Recently Deleted. Immich is never changed.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(16)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
     }
 
-    private func formatCounts(_ album: AlbumSummary) -> String {
+    private func selectedAlbumSummary(_ album: AlbumSummary) -> String {
         var parts: [String] = []
-        if album.photoCount > 0 {
-            parts.append("\(album.photoCount) \(album.photoCount == 1 ? "photo" : "photos")")
-        }
-        if album.videoCount > 0 {
-            parts.append("\(album.videoCount) \(album.videoCount == 1 ? "video" : "videos")")
-        }
-        if parts.isEmpty { return "Empty album" }
+        if album.photoCount > 0 { parts.append("\(album.photoCount) photos") }
+        if album.videoCount > 0 { parts.append("\(album.videoCount) videos") }
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Verify bar
-
-    private var verifyBar: some View {
-        HStack {
-            Spacer()
-            Button {
-                startRun()
-            } label: {
-                Label("Verify", systemImage: "checkmark.seal")
-                    .padding(.horizontal, 8)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(selectedAlbum == nil || (selectedAlbum?.totalCount ?? 0) == 0)
+    private func reconcileAlbumSelection() {
+        if let selectedAlbumID,
+           !verificationAlbums.contains(where: { $0.id == selectedAlbumID }) {
+            self.selectedAlbumID = nil
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        if selectedAlbumID == nil,
+           let defaultID = appState.defaultAlbumID,
+           verificationAlbums.contains(where: { $0.id == defaultID }) {
+            selectedAlbumID = defaultID
+        }
     }
 
-    // MARK: - Actions
-
     private func startRun() {
-        guard let album = selectedAlbum, album.totalCount > 0 else { return }
-        let newRun = VerificationRun(album: album, appState: appState)
+        guard let selectedAlbum else { return }
+        let newRun = VerificationRun(album: selectedAlbum, appState: appState)
         run = newRun
         newRun.start()
     }
@@ -277,6 +286,24 @@ struct MainView: View {
     private func handleRunDismiss() {
         run?.cancel()
         run = nil
+    }
+}
+
+private struct HeaderIconControl: View {
+    let systemName: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .help(label)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
     }
 }
 

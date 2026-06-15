@@ -1,6 +1,6 @@
 # PhotoProof
 
-A native macOS app that helps you free up space in Apple Photos by **verifying every photo is already safely backed up to your self-hosted Immich server before you delete it locally**.
+A native macOS app that helps you free up space in Apple Photos and iCloud Photos by **verifying every photo is already safely backed up to your self-hosted Immich server before Photos moves it to Recently Deleted**.
 
 PhotoProof is intentionally read-only against Immich and reversible-only against Photos. The most destructive thing it can do is move items to Recently Deleted, where Apple's built-in 30-day timer is the safety net.
 
@@ -8,24 +8,27 @@ PhotoProof is intentionally read-only against Immich and reversible-only against
 
 ## What it does
 
-The workflow is intentionally simple:
+The primary workflow is intentionally simple:
 
-1. In **Apple Photos**, create a regular album (e.g. "To Delete") and drag in any photos you'd like to remove. Or use **Find photos to clean up…** in PhotoProof to filter your library by age, size, and media type and bundle the matches into a new album in one click — see below.
-2. Open **PhotoProof**, pick that album from the dropdown, and click **Verify**.
-3. PhotoProof reads the original bytes of each photo and video, computes its SHA1, and asks Immich whether each one already exists — and isn't sitting in Immich's own trash.
-4. You see two lists: **Verified ✅** (safely backed up) and **Needs attention ⚠️** (not backed up, in Immich trash, missing Live Photo MOV, etc.).
-5. If you want, click **Delete N from MacOS Photos** to move just the verified items to Recently Deleted. PhotoProof asks for confirmation, writes a CSV log, and then Photos asks again with its own system dialog.
-6. If the staging album is now empty, PhotoProof offers to delete it too.
-7. Items that didn't verify are left alone — re-upload them to Immich and run again.
+1. Click **Start a smart cleanup** and choose age, size, and media filters.
+2. Review the matches and deselect anything you want to keep.
+3. Click **Create album & verify**. PhotoProof automatically creates a date-stamped staging album in Photos and immediately starts verification.
+4. PhotoProof reads every original resource, computes its SHA1, and asks Immich whether it exists and is not in Immich's trash.
+5. Review **Safe to remove** and **Needs attention**. Items that do not pass every check stay in Photos.
+6. Click **Move to Recently Deleted** to move only verified items. PhotoProof asks for confirmation, writes a CSV log, and then Photos shows its own system prompt.
+7. If the staging album is empty afterward, PhotoProof offers to delete the album too.
 
-PhotoProof never permanently deletes anything. Everything moved is recoverable from Photos → Recently Deleted for 30 days.
+Already have an album prepared in Photos? Choose it from the secondary
+**Verify an existing album** section on the dashboard.
+
+PhotoProof never permanently deletes anything itself. Everything moved is recoverable from Photos → Recently Deleted for 30 days, and Apple Photos reclaims the storage when Recently Deleted is cleared.
 
 ### Managing empty albums
 
-PhotoProof keeps empty albums out of the verification picker. When it finds
-deletable, user-created albums with no photos or videos, a compact notice
-appears below the picker. Click **Review…**, select individual albums or use
-**Select All**, then confirm the deletion.
+PhotoProof keeps empty albums out of the existing-album menu. When it finds
+deletable, user-created albums with no photos or videos, a compact review link
+appears in that dashboard section. Select individual albums or use **Select
+All**, then confirm the deletion.
 
 The same screen is available from **Library → Manage Empty Albums…**. Before
 deleting each album, PhotoProof re-fetches it and confirms that it still
@@ -35,14 +38,20 @@ or videos, but the album deletion is synchronized through iCloud Photos.
 
 ### Building a staging album from filters
 
-If you don't already have an album of candidates, click **Find photos to clean up…** under the album picker. PhotoProof opens a sheet where you can:
+Click **Start a smart cleanup** on the dashboard. PhotoProof opens a guided
+workspace where you can:
 
 - filter by **age** (text field + days/months/years toggle)
 - filter by **minimum file size** (text field + MB/GB toggle)
 - choose **photos, videos, or both**
 - skip favorites and hidden items
 
-PhotoProof scans your library (read-only — nothing is moved or modified), shows the matches in a thumbnail grid sorted by size, and lets you tap thumbnails to deselect any you want to keep. Click **Create album** and PhotoProof creates a new user album in Photos containing the chosen items, then auto-selects it in the main picker so you can run **Verify** immediately. Photos albums are tags rather than folders, so any asset added to the new album stays in every other album it was already in — and items aren't moved or modified by this step.
+PhotoProof scans your library (read-only — nothing is moved or modified),
+shows the matches in a thumbnail grid sorted by size, and lets you click
+thumbnails to deselect anything you want to keep. Click **Create album &
+verify** and PhotoProof creates a date-stamped user album containing the
+selection, then starts verification immediately. Photos albums are tags rather
+than folders, so assets remain in every other album they already belong to.
 
 ---
 
@@ -127,7 +136,7 @@ swift tools/generate_icon.swift
 
 1. **Welcome → Grant Photos Access.** PhotoProof needs read/write access to your Photos library (read for hashing, write to move items to Recently Deleted).
 2. **Connect to Immich.** Paste your server URL (with or without a trailing `/api` — PhotoProof normalizes it) and your API key. Click **Test Connection**. On success, you'll see "Connected as <your account>" and the **Save** button enables.
-3. **Pick an album → Verify.** PhotoProof remembers the last album you picked and pre-selects it next time.
+3. **Start a smart cleanup.** Review the matches, then create the staging album and begin verification with one action. You can still verify an existing Photos album from the dashboard.
 
 ---
 
@@ -186,10 +195,11 @@ PhotoProof/
 │   ├── RootView.swift            — onboarding → settings → main router
 │   ├── OnboardingView.swift      — Photos permission flow
 │   ├── SettingsView.swift        — server URL + API key + Test Connection
-│   ├── MainView.swift            — album picker, summary card, Verify button
+│   ├── MainView.swift            — cleanup dashboard + existing-album action
+│   ├── PhotoProofStyle.swift      — shared visual system and surfaces
 │   ├── EmptyAlbumsView.swift     — selects and deletes empty Photos albums
-│   ├── RunSheetView.swift        — three-stage progress + results + delete + success
-│   ├── FindCandidatesView.swift  — filter sheet for building a staging album
+│   ├── RunSheetView.swift        — verification progress + results + delete + success
+│   ├── FindCandidatesView.swift  — guided search, review, album, and verify flow
 │   ├── HistoryView.swift         — past run logs
 │   └── QuickLookPresenter.swift  — bridges to QLPreviewPanel
 └── Assets.xcassets/              — app icon (regenerate with tools/generate_icon.swift)
@@ -208,7 +218,7 @@ The reference Node.js implementation (`verify_deleted.mjs` at the repo root) was
 |---|---|
 | ⌘ , | Open Settings |
 | ⌘ Y | Open Verification History |
-| ⌘ ↵ | Verify selected album |
+| ↵ | Start the highlighted primary action |
 | Space | Quick Look the selected result |
 | ↵ | Quick Look the selected result |
 

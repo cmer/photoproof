@@ -21,14 +21,17 @@ struct EmptyAlbumsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        ZStack {
+            PhotoProofBackdrop()
+
+            VStack(spacing: 0) {
+                header
+                content
+                    .padding(20)
+                footer
+            }
         }
-        .frame(minWidth: 600, minHeight: 440)
+        .frame(minWidth: 680, minHeight: 500)
         .task { await library.start() }
         .onChange(of: library.albums) { _, _ in
             selectedIDs.formIntersection(albums.map(\.id))
@@ -44,10 +47,11 @@ struct EmptyAlbumsView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 14) {
+            ProofIcon(systemName: "rectangle.stack.badge.minus", color: PhotoProofStyle.amber, size: 42)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Empty Albums").font(.title3.bold())
-                Text("Review user-created albums that contain no photos or videos.")
+                Text("Empty Albums").font(.title2.bold())
+                Text("Remove unused album containers without deleting any assets.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -61,7 +65,12 @@ struct EmptyAlbumsView: View {
             .help("Refresh albums")
             .accessibilityLabel("Refresh albums")
         }
-        .padding(16)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     @ViewBuilder
@@ -69,7 +78,6 @@ struct EmptyAlbumsView: View {
         VStack(spacing: 0) {
             if let result {
                 resultBanner(result)
-                Divider()
             }
 
             if library.isLoading && albums.isEmpty {
@@ -80,6 +88,12 @@ struct EmptyAlbumsView: View {
             } else {
                 albumList
             }
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         }
     }
 
@@ -105,8 +119,6 @@ struct EmptyAlbumsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            Divider()
-
             List(albums) { album in
                 Toggle(isOn: selectionBinding(for: album.id)) {
                     HStack(spacing: 10) {
@@ -124,12 +136,10 @@ struct EmptyAlbumsView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text("No empty albums found.")
-                .font(.headline)
+        VStack(spacing: 12) {
+            ProofIcon(systemName: "checkmark", color: PhotoProofStyle.mint, size: 56)
+            Text("No empty albums")
+                .font(.title3.bold())
             Text("Only regular, user-created albums are included.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -165,7 +175,12 @@ struct EmptyAlbumsView: View {
             .tint(.red)
             .disabled(selectedCount == 0 || isDeleting)
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     private func resultBanner(_ result: DeletionResult) -> some View {

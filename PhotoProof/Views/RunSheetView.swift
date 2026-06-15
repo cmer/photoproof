@@ -1,7 +1,6 @@
 // RunSheetView.swift
-// Modal sheet that walks a VerificationRun through scanning → hashing →
-// bulk-check → trash-check → completed, with three stage progress bars during
-// the run and a Verified / Needs-Attention split once it's done.
+// Guided verification workspace with progress, safety results, preview,
+// export, and the final move-to-Recently-Deleted action.
 
 import SwiftUI
 import AppKit
@@ -11,10 +10,13 @@ struct RunSheetView: View {
     var onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
+        ZStack {
+            PhotoProofBackdrop()
+
+            VStack(spacing: 0) {
+                header
+                content
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -22,12 +24,25 @@ struct RunSheetView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(run.album.title).font(.title3.bold())
-                Text(headerSubtitle).font(.subheadline).foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+            ProofIcon(systemName: headerIcon, color: headerColor, size: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(run.stage == .completed ? "Verification complete" : "Verifying cleanup")
+                        .font(.title2.bold())
+                    if run.stage == .completed {
+                        ProofPill(title: "IMMICH CHECKED", systemName: "checkmark.shield.fill", color: PhotoProofStyle.mint)
+                    }
+                }
+                Text("\(run.album.title) · \(headerSubtitle)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+
             Spacer()
+
             switch run.stage {
             case .scanning, .hashing, .checkingBulk, .checkingTrash:
                 Button("Cancel", role: .cancel) { run.cancel() }
@@ -37,7 +52,12 @@ struct RunSheetView: View {
                     .disabled(run.deleteState.isInProgress)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     private var headerSubtitle: String {
@@ -46,9 +66,27 @@ struct RunSheetView: View {
         case .hashing: return run.hashDetail
         case .checkingBulk: return "Checking Immich \(run.bulkCheckedCount) of \(run.bulkTotal)"
         case .checkingTrash: return "Verifying trash status \(run.trashCheckedCount) of \(run.trashTotal)"
-        case .completed: return "\(run.verifiedAssets.count) verified · \(run.needsAttentionAssets.count) need attention"
+        case .completed: return "\(run.verifiedAssets.count) safe · \(run.needsAttentionAssets.count) blocked"
         case .cancelled: return "Cancelled"
         case .error(let m): return m
+        }
+    }
+
+    private var headerIcon: String {
+        switch run.stage {
+        case .completed: return "checkmark.shield.fill"
+        case .cancelled: return "xmark"
+        case .error: return "exclamationmark.triangle.fill"
+        default: return "waveform.path.ecg"
+        }
+    }
+
+    private var headerColor: Color {
+        switch run.stage {
+        case .completed: return PhotoProofStyle.mint
+        case .cancelled: return .secondary
+        case .error: return PhotoProofStyle.amber
+        default: return PhotoProofStyle.accent
         }
     }
 
@@ -78,49 +116,70 @@ struct RunSheetView: View {
     }
 
     private var deletingView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            Text(run.deleteState == .writingLog ? "Saving CSV log…" : "Deleting from MacOS Photos…")
-                .foregroundStyle(.secondary)
+        VStack(spacing: 22) {
+            ProgressView().controlSize(.large)
+            VStack(spacing: 6) {
+                Text(run.deleteState == .writingLog ? "Saving your audit log" : "Waiting for Photos")
+                    .font(.title2.bold())
+                Text(run.deleteState == .writingLog
+                     ? "No assets move until this record is safely written."
+                     : "Confirm the macOS prompt to move verified items to Recently Deleted.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var scanningView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            Text("Reading album from Photos…")
-                .foregroundStyle(.secondary)
+        VStack(spacing: 22) {
+            ProgressView().controlSize(.large)
+            VStack(spacing: 6) {
+                Text("Reading original assets")
+                    .font(.title2.bold())
+                Text("PhotoProof is mapping every photo, video, and Live Photo resource in this album.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 480)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var progressView: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 14) {
+        HStack(spacing: 34) {
+            VerificationProgressRing(
+                fraction: overallProgress,
+                title: overallProgressTitle
+            )
+
+            VStack(spacing: 12) {
                 StageProgress(
-                    label: "Reading photos",
+                    label: "Hash originals",
                     detail: run.hashDetail,
                     fraction: run.hashFraction,
-                    state: state(for: .hashing)
+                    state: state(for: .hashing),
+                    systemName: "number"
                 )
                 StageProgress(
-                    label: "Checking Immich",
+                    label: "Match in Immich",
                     detail: "\(run.bulkCheckedCount) of \(run.bulkTotal)",
                     fraction: run.bulkFraction,
-                    state: state(for: .checkingBulk)
+                    state: state(for: .checkingBulk),
+                    systemName: "server.rack"
                 )
                 StageProgress(
-                    label: "Verifying trash status",
+                    label: "Confirm not trashed",
                     detail: run.trashTotal == 0 ? "—" : "\(run.trashCheckedCount) of \(run.trashTotal)",
                     fraction: run.trashFraction,
-                    state: state(for: .checkingTrash)
+                    state: state(for: .checkingTrash),
+                    systemName: "trash.slash"
                 )
             }
-            .padding(20)
-            Spacer(minLength: 0)
+            .frame(maxWidth: 520)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(42)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var cancelledView: some View {
@@ -161,9 +220,57 @@ struct RunSheetView: View {
         if currentIdx == activeIdx { return .active }
         return .pending
     }
+
+    private var overallProgress: Double {
+        switch run.stage {
+        case .hashing: return run.hashFraction * 0.55
+        case .checkingBulk: return 0.55 + run.bulkFraction * 0.25
+        case .checkingTrash: return 0.80 + run.trashFraction * 0.20
+        case .completed: return 1
+        default: return 0
+        }
+    }
+
+    private var overallProgressTitle: String {
+        switch run.stage {
+        case .hashing: return "HASHING"
+        case .checkingBulk: return "MATCHING"
+        case .checkingTrash: return "CONFIRMING"
+        default: return "PREPARING"
+        }
+    }
 }
 
 // MARK: - Stage progress
+
+private struct VerificationProgressRing: View {
+    let fraction: Double
+    let title: String
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(PhotoProofStyle.accent.opacity(0.12), lineWidth: 14)
+            Circle()
+                .trim(from: 0, to: fraction)
+                .stroke(
+                    PhotoProofStyle.heroGradient,
+                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.25), value: fraction)
+            VStack(spacing: 2) {
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                Text(title)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 174, height: 174)
+    }
+}
 
 private struct StageProgress: View {
     enum State { case pending, active, done }
@@ -172,29 +279,50 @@ private struct StageProgress: View {
     let detail: String
     let fraction: Double
     let state: State
+    let systemName: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(iconColor.opacity(0.12))
                 statusIcon
-                Text(label).bold()
-                Spacer()
-                Text(detail)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
-            ProgressView(value: state == .done ? 1 : fraction)
-                .progressViewStyle(.linear)
-                .opacity(state == .pending ? 0.35 : 1)
+            .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(label).bold()
+                    Spacer()
+                    Text(detail)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                ProgressView(value: state == .done ? 1 : fraction)
+                    .progressViewStyle(.linear)
+                    .tint(iconColor)
+                    .opacity(state == .pending ? 0.30 : 1)
+            }
         }
+        .proofSurface(padding: 14, cornerRadius: 16)
+        .opacity(state == .pending ? 0.68 : 1)
     }
 
     @ViewBuilder
     private var statusIcon: some View {
         switch state {
-        case .pending: Image(systemName: "circle").foregroundStyle(.secondary)
+        case .pending: Image(systemName: systemName).foregroundStyle(.secondary)
         case .active: ProgressView().controlSize(.small)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .done: Image(systemName: "checkmark").foregroundStyle(PhotoProofStyle.mint)
+        }
+    }
+
+    private var iconColor: Color {
+        switch state {
+        case .pending: return .secondary
+        case .active: return PhotoProofStyle.accent
+        case .done: return PhotoProofStyle.mint
         }
     }
 }
@@ -222,18 +350,17 @@ private struct ResultsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            resultSummary
             sectionBar
-            Divider()
             list
-            Divider()
             footer
         }
         .alert(
-            "Delete \(run.verifiedAssets.count) item\(run.verifiedAssets.count == 1 ? "" : "s") from MacOS Photos?",
+            "Move \(run.verifiedAssets.count) item\(run.verifiedAssets.count == 1 ? "" : "s") to Recently Deleted?",
             isPresented: $showDeleteConfirmation,
             actions: {
                 Button("Cancel", role: .cancel) {}
-                Button("Delete from MacOS Photos", role: .destructive) {
+                Button("Move to Recently Deleted", role: .destructive) {
                     Task { await run.deleteVerified() }
                 }
             },
@@ -249,6 +376,31 @@ private struct ResultsView: View {
                 if case .failed(let m) = run.deleteState { Text(m) }
             }
         )
+    }
+
+    private var resultSummary: some View {
+        HStack(spacing: 14) {
+            ResultMetric(
+                value: "\(run.verifiedAssets.count)",
+                label: "Safe to remove",
+                systemName: "checkmark.shield.fill",
+                color: PhotoProofStyle.mint
+            )
+            ResultMetric(
+                value: "\(run.needsAttentionAssets.count)",
+                label: "Kept in Photos",
+                systemName: "exclamationmark.triangle.fill",
+                color: PhotoProofStyle.amber
+            )
+            ResultMetric(
+                value: formatSize(run.verifiedAssets.reduce(0) { $0 + $1.totalSizeBytes }),
+                label: "Recoverable space",
+                systemName: "internaldrive",
+                color: PhotoProofStyle.accent
+            )
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
     }
 
     private var deleteFailedBinding: Binding<Bool> {
@@ -284,7 +436,7 @@ private struct ResultsView: View {
     private var sectionBar: some View {
         HStack(spacing: 12) {
             Picker("", selection: $section) {
-                Label("Verified  \(run.verifiedAssets.count)", systemImage: "checkmark.seal.fill")
+                Label("Safe to remove  \(run.verifiedAssets.count)", systemImage: "checkmark.seal.fill")
                     .tag(Section.verified)
                 Label("Needs attention  \(run.needsAttentionAssets.count)", systemImage: "exclamationmark.triangle.fill")
                     .tag(Section.attention)
@@ -307,45 +459,54 @@ private struct ResultsView: View {
             .frame(width: 80)
             .help("Switch between list and grid view")
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
         .onChange(of: section) { _, _ in selectedID = nil }
     }
 
-    @ViewBuilder
     private var list: some View {
         let rows = section == .verified ? run.verifiedAssets : run.needsAttentionAssets
-        if rows.isEmpty {
-            emptyState
-        } else if viewMode == .grid {
-            AssetGridView(
-                rows: rows,
-                showReason: section == .attention,
-                selection: $selectedID,
-                onPreview: openQuickLook
-            )
-        } else if section == .verified {
-            VerifiedTable(
-                rows: rows,
-                selection: $selectedID,
-                onPreview: openQuickLook
-            )
-        } else {
-            AttentionTable(
-                rows: rows,
-                selection: $selectedID,
-                onPreview: openQuickLook
-            )
+        return Group {
+            if rows.isEmpty {
+                emptyState
+            } else if viewMode == .grid {
+                AssetGridView(
+                    rows: rows,
+                    showReason: section == .attention,
+                    selection: $selectedID,
+                    onPreview: openQuickLook
+                )
+            } else if section == .verified {
+                VerifiedTable(
+                    rows: rows,
+                    selection: $selectedID,
+                    onPreview: openQuickLook
+                )
+            } else {
+                AttentionTable(
+                    rows: rows,
+                    selection: $selectedID,
+                    onPreview: openQuickLook
+                )
+            }
         }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+        .padding(.horizontal, 20)
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: section == .verified ? "checkmark.seal" : "checkmark.circle")
                 .font(.system(size: 36))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(section == .verified ? PhotoProofStyle.accent : PhotoProofStyle.mint)
             Text(section == .verified
-                 ? "Nothing was verified in this run."
-                 : "Nothing needs attention — every item is in Immich.")
+                 ? "No items are safe to remove."
+                 : "Everything is safely backed up.")
+                .font(.headline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -367,7 +528,7 @@ private struct ResultsView: View {
             }
             HStack {
                 if section == .attention, !run.needsAttentionAssets.isEmpty {
-                    Text("Re-upload these to Immich, then run PhotoProof again.")
+                    Label("These items stay in Photos.", systemImage: "lock.fill")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
@@ -388,18 +549,23 @@ private struct ResultsView: View {
                         showDeleteConfirmation = true
                     } label: {
                         Label(deleteButtonTitle, systemImage: "trash")
+                            .font(.headline)
+                            .padding(.horizontal, 5)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.large)
                     .disabled(run.verifiedAssets.isEmpty)
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
     }
 
     private var deleteButtonTitle: String {
         let n = run.verifiedAssets.count
-        return "Delete \(n) from MacOS Photos"
+        return "Move \(n) to Recently Deleted"
     }
 
     private var currentRows: [AssetVerification] {
@@ -433,6 +599,31 @@ private struct ResultsView: View {
         } catch {
             exportError = "Couldn't write CSV: \(error.localizedDescription)"
         }
+    }
+}
+
+private struct ResultMetric: View {
+    let value: String
+    let label: String
+    let systemName: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProofIcon(systemName: systemName, color: color, size: 38)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .proofSurface(padding: 14, cornerRadius: 16)
     }
 }
 
@@ -664,31 +855,38 @@ private struct DeleteSuccessView: View {
     let logURL: URL?
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 20) {
             Spacer()
 
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.green)
+            ZStack {
+                Circle()
+                    .fill(PhotoProofStyle.mint.opacity(0.12))
+                    .frame(width: 104, height: 104)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 42, weight: .bold))
+                    .foregroundStyle(PhotoProofStyle.mint)
+            }
 
             Text("\(count) item\(count == 1 ? "" : "s") moved to Recently Deleted")
-                .font(.title2.bold())
+                .font(.system(.title, design: .rounded, weight: .bold))
                 .multilineTextAlignment(.center)
 
             if bytes > 0 {
-                Text("Frees about \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) once Photos clears them out.")
-                    .font(.headline)
-                    .foregroundStyle(.green)
+                ProofPill(
+                    title: "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) recoverable",
+                    systemName: "internaldrive",
+                    color: PhotoProofStyle.mint
+                )
             }
 
-            Text("Photos will permanently remove them in 30 days, or you can recover any of them from Photos → Recently Deleted before then.")
+            Text("They remain recoverable in Photos for 30 days. Items that did not pass verification were left exactly where they were.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 480)
 
             if let logURL {
                 VStack(spacing: 4) {
-                    Text("A CSV log of this run was saved to:")
+                    Text("Audit log saved")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button {
@@ -698,7 +896,8 @@ private struct DeleteSuccessView: View {
                     }
                     .buttonStyle(.link)
                 }
-                .padding(.top, 4)
+                .padding(14)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
 
             albumFollowUp
@@ -727,6 +926,7 @@ private struct DeleteSuccessView: View {
                             Label("Delete album", systemImage: "trash")
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(.red)
                     }
                 }
                 .padding(.top, 8)

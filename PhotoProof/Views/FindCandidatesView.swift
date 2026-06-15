@@ -1,413 +1,644 @@
 // FindCandidatesView.swift
-// Sheet that lets the user filter their Photos library by age + size +
-// media type, review the matches in a thumbnail grid, and bundle the
-// chosen items into a new album for verification. Read-only on Photos
-// until the user clicks "Create album".
+// Guided cleanup flow: configure a search, review matches, automatically create
+// a staging album, and continue directly into safe Immich verification.
 
 import SwiftUI
 import AppKit
 
 struct FindCandidatesView: View {
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    /// Called with the new album's localIdentifier on success so the parent
-    /// can pre-select it in the main album picker.
     let onAlbumCreated: (String) -> Void
 
-    // Filter — persisted across runs so the user doesn't re-enter every time.
-    @AppStorage("PhotoProof.Find.MinAge")     private var minAge: Int = 3
-    @AppStorage("PhotoProof.Find.AgeUnit")    private var ageUnitRaw: String = CandidateFilter.AgeUnit.years.rawValue
-    @AppStorage("PhotoProof.Find.MinSize")    private var minSize: Int = 10
-    @AppStorage("PhotoProof.Find.SizeUnit")   private var sizeUnitRaw: String = CandidateFilter.SizeUnit.megabytes.rawValue
-    @AppStorage("PhotoProof.Find.MediaType")  private var mediaTypeRaw: String = CandidateFilter.MediaTypeFilter.all.rawValue
-    @AppStorage("PhotoProof.Find.SkipFav")    private var skipFavorites: Bool = true
-    @AppStorage("PhotoProof.Find.SkipHidden") private var skipHidden: Bool = true
+    @AppStorage("PhotoProof.Find.MinAge") private var minAge = 3
+    @AppStorage("PhotoProof.Find.AgeUnit") private var ageUnitRaw = CandidateFilter.AgeUnit.years.rawValue
+    @AppStorage("PhotoProof.Find.MinSize") private var minSize = 10
+    @AppStorage("PhotoProof.Find.SizeUnit") private var sizeUnitRaw = CandidateFilter.SizeUnit.megabytes.rawValue
+    @AppStorage("PhotoProof.Find.MediaType") private var mediaTypeRaw = CandidateFilter.MediaTypeFilter.all.rawValue
+    @AppStorage("PhotoProof.Find.SkipFav") private var skipFavorites = true
+    @AppStorage("PhotoProof.Find.SkipHidden") private var skipHidden = true
 
     @State private var stage: Stage = .configuring
     @State private var candidates: [Candidate] = []
     @State private var deselected: Set<String> = []
-    @State private var processed: Int = 0
-    @State private var total: Int = 0
-    @State private var albumName: String = defaultAlbumName()
-    @State private var error: String?
+    @State private var processed = 0
+    @State private var total = 0
+    @State private var errorMessage: String?
     @State private var searchTask: Task<Void, Never>?
+    @State private var verificationRun: VerificationRun?
 
-    enum Stage: Equatable {
+    enum Stage {
         case configuring
         case searching
         case results
         case creating
-        case done(albumName: String, count: Int, albumID: String)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
+        ZStack {
+            PhotoProofBackdrop()
+
+            if let verificationRun {
+                RunSheetView(run: verificationRun) {
+                    dismiss()
+                }
+            } else {
+                finder
+            }
         }
-        .frame(minWidth: 720, minHeight: 520)
+        .frame(minWidth: 820, minHeight: 640)
         .onDisappear { searchTask?.cancel() }
     }
 
-    // MARK: - Header
+    private var finder: some View {
+        VStack(spacing: 0) {
+            header
+
+            Group {
+                switch stage {
+                case .configuring:
+                    configureView
+                case .searching:
+                    searchingView
+                case .results:
+                    resultsView
+                case .creating:
+                    creatingView
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Find photos to clean up").font(.title3.bold())
-                Text(headerSubtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 18) {
+            HStack(spacing: 14) {
+                ProofIcon(systemName: "sparkle.magnifyingglass", size: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Smart Cleanup")
+                        .font(.title2.bold())
+                    Text(headerSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(stage == .creating)
             }
-            Spacer()
-            switch stage {
-            case .configuring:
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            case .searching:
-                Button("Cancel") {
-                    searchTask?.cancel()
-                    stage = .configuring
-                }
-                .keyboardShortcut(.cancelAction)
-            case .results:
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            case .creating:
-                EmptyView()
-            case .done:
-                Button("Done") {
-                    if case .done(_, _, let albumID) = stage {
-                        onAlbumCreated(albumID)
-                    }
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
+
+            HStack(spacing: 0) {
+                FinderStep(
+                    title: "Find",
+                    systemName: "line.3.horizontal.decrease.circle",
+                    state: stepState(for: 0)
+                )
+                FinderStepLine(isComplete: stepIndex > 0)
+                FinderStep(
+                    title: "Review",
+                    systemName: "square.grid.2x2",
+                    state: stepState(for: 1)
+                )
+                FinderStepLine(isComplete: stepIndex > 1)
+                FinderStep(
+                    title: "Verify",
+                    systemName: "checkmark.shield",
+                    state: stepState(for: 2)
+                )
             }
         }
-        .padding(16)
+        .padding(.horizontal, 28)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     private var headerSubtitle: String {
         switch stage {
         case .configuring:
-            return "Search by age and size, then bundle the matches into an album."
+            return "Set the guardrails for this cleanup."
         case .searching:
-            return total > 0
-                ? "Scanning library — \(processed) of \(total)…"
-                : "Scanning library…"
+            return total > 0 ? "Scanning \(processed) of \(total) library items…" : "Reading your Photos library…"
         case .results:
-            let selected = candidates.filter { !deselected.contains($0.id) }
-            let bytes = selected.reduce(Int64(0)) { $0 + $1.totalSizeBytes }
-            return "\(selected.count) of \(candidates.count) selected · \(formatBytes(bytes))"
+            if candidates.isEmpty {
+                return "No matches found"
+            }
+            return "\(selectedCandidates.count) selected · \(formatBytes(selectedBytes))"
         case .creating:
-            return "Creating album in Photos…"
-        case .done(let name, let count, _):
-            return "Created “\(name)” with \(count) item\(count == 1 ? "" : "s")."
+            return "Creating a Photos album and preparing verification…"
         }
     }
 
-    // MARK: - Stages
-
-    @ViewBuilder
-    private var content: some View {
+    private var stepIndex: Int {
         switch stage {
-        case .configuring: configureView
-        case .searching:   searchingView
-        case .results:     resultsView
-        case .creating:    creatingView
-        case .done(_, let count, _): doneView(count: count)
+        case .configuring, .searching: return 0
+        case .results: return 1
+        case .creating: return 2
         }
     }
 
-    private var mediaType: CandidateFilter.MediaTypeFilter {
-        CandidateFilter.MediaTypeFilter(rawValue: mediaTypeRaw) ?? .all
+    private func stepState(for index: Int) -> FinderStep.State {
+        if index < stepIndex { return .complete }
+        if index == stepIndex { return .active }
+        return .pending
     }
 
     private var configureView: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    LabeledContent("Older than") {
-                        HStack(spacing: 8) {
-                            TextField("3", value: $minAge, format: .number)
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 60)
-                                .onChange(of: minAge) { _, v in
-                                    if v < 0 { minAge = 0 }
-                                }
-                            Picker("Age unit", selection: $ageUnitRaw) {
-                                ForEach(CandidateFilter.AgeUnit.allCases) { u in
-                                    Text(u.label).tag(u.rawValue)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 220)
-                        }
-                    }
-                    LabeledContent("Larger than") {
-                        HStack(spacing: 8) {
-                            TextField("10", value: $minSize, format: .number)
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 60)
-                                .onChange(of: minSize) { _, v in
-                                    if v < 0 { minSize = 0 }
-                                }
-                            Picker("Size unit", selection: $sizeUnitRaw) {
-                                ForEach(CandidateFilter.SizeUnit.allCases) { u in
-                                    Text(u.label).tag(u.rawValue)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 110)
-                        }
-                    }
-                    Picker("Media", selection: $mediaTypeRaw) {
-                        ForEach(CandidateFilter.MediaTypeFilter.allCases) { t in
-                            Text(t.label).tag(t.rawValue)
-                        }
-                    }
-                }
-                Section {
-                    Toggle("Skip favorites", isOn: $skipFavorites)
-                    Toggle("Skip hidden", isOn: $skipHidden)
-                } footer: {
-                    Text("PhotoProof only reads your library to find matches. Nothing is moved or modified until you create an album.")
-                        .font(.caption)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What should PhotoProof look for?")
+                        .font(.system(.title, design: .rounded, weight: .bold))
+                    Text("Broad filters find cleanup opportunities. You will review every match before anything is added to an album.")
                         .foregroundStyle(.secondary)
                 }
-            }
-            .formStyle(.grouped)
 
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal)
-            }
+                HStack(alignment: .top, spacing: 16) {
+                    filterCard(
+                        icon: "calendar.badge.clock",
+                        color: PhotoProofStyle.accent,
+                        title: "Older than"
+                    ) {
+                        HStack(spacing: 10) {
+                            TextField("3", value: $minAge, format: .number)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .multilineTextAlignment(.center)
+                                .frame(width: 70)
+                                .padding(.vertical, 8)
+                                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+                                .onChange(of: minAge) { _, value in minAge = max(0, value) }
 
-            HStack {
-                Spacer()
-                Button {
-                    runSearch()
-                } label: {
-                    Label("Search", systemImage: "magnifyingglass")
+                            Picker("Age unit", selection: $ageUnitRaw) {
+                                ForEach(CandidateFilter.AgeUnit.allCases) { unit in
+                                    Text(unit.label.capitalized).tag(unit.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+
+                    filterCard(
+                        icon: "externaldrive.badge.minus",
+                        color: PhotoProofStyle.cyan,
+                        title: "Larger than"
+                    ) {
+                        HStack(spacing: 10) {
+                            TextField("10", value: $minSize, format: .number)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .multilineTextAlignment(.center)
+                                .frame(width: 80)
+                                .padding(.vertical, 8)
+                                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+                                .onChange(of: minSize) { _, value in minSize = max(0, value) }
+
+                            Picker("Size unit", selection: $sizeUnitRaw) {
+                                ForEach(CandidateFilter.SizeUnit.allCases) { unit in
+                                    Text(unit.label).tag(unit.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+
+                    filterCard(
+                        icon: "photo.on.rectangle.angled",
+                        color: PhotoProofStyle.mint,
+                        title: "Media"
+                    ) {
+                        Picker("Media", selection: $mediaTypeRaw) {
+                            ForEach(CandidateFilter.MediaTypeFilter.allCases) { type in
+                                Text(type.shortLabel).tag(type.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Protect special items")
+                                .font(.headline)
+                            Text("These are excluded from the search before results are shown.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        ProofPill(title: "RECOMMENDED", systemName: "lock.fill", color: PhotoProofStyle.mint)
+                    }
+
+                    HStack(spacing: 12) {
+                        ProtectionToggle(
+                            title: "Favorites",
+                            detail: "Skip anything you starred",
+                            systemName: "heart.fill",
+                            color: .pink,
+                            isOn: $skipFavorites
+                        )
+                        ProtectionToggle(
+                            title: "Hidden",
+                            detail: "Leave hidden items untouched",
+                            systemName: "eye.slash.fill",
+                            color: .purple,
+                            isOn: $skipHidden
+                        )
+                    }
+                }
+                .proofSurface()
+
+                if let errorMessage {
+                    errorBanner(errorMessage)
+                }
+
+                HStack {
+                    Label("This scan is read-only.", systemImage: "eye")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        runSearch()
+                    } label: {
+                        Label("Find cleanup candidates", systemImage: "magnifyingglass")
+                            .font(.headline)
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(PhotoProofStyle.accent)
+                    .keyboardShortcut(.defaultAction)
+                }
             }
-            .padding(16)
+            .frame(maxWidth: 980)
+            .padding(28)
+            .frame(maxWidth: .infinity)
         }
     }
 
+    private func filterCard<Content: View>(
+        icon: String,
+        color: Color,
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                ProofIcon(systemName: icon, color: color, size: 36)
+                Text(title).font(.headline)
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .proofSurface(padding: 18)
+    }
+
     private var searchingView: some View {
-        VStack(spacing: 16) {
-            ProgressView(value: total > 0 ? Double(processed) / Double(total) : 0)
-                .progressViewStyle(.linear)
-                .frame(maxWidth: 360)
-            Text("Scanning \(processed) of \(total)…")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+        VStack(spacing: 24) {
+            ZStack {
+                Circle()
+                    .stroke(PhotoProofStyle.accent.opacity(0.12), lineWidth: 12)
+                Circle()
+                    .trim(from: 0, to: searchFraction)
+                    .stroke(
+                        PhotoProofStyle.heroGradient,
+                        style: StrokeStyle(lineWidth: 12, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.25), value: searchFraction)
+                VStack(spacing: 2) {
+                    Text(total > 0 ? "\(Int(searchFraction * 100))%" : "…")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    Text("SCANNED")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 150, height: 150)
+
+            VStack(spacing: 6) {
+                Text("Finding your best cleanup opportunities")
+                    .font(.title2.bold())
+                Text(total > 0 ? "\(processed) of \(total) items checked" : "Preparing your library…")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            Button("Cancel scan") {
+                searchTask?.cancel()
+                stage = .configuring
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
     }
 
     @ViewBuilder
     private var resultsView: some View {
         if candidates.isEmpty {
-            VStack(spacing: 10) {
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.secondary)
-                Text("No matches.")
-                    .foregroundStyle(.secondary)
-                Text("Try loosening the filters — a smaller minimum size or fewer years.")
-                    .font(.callout)
+            VStack(spacing: 16) {
+                ProofIcon(systemName: "checkmark", color: PhotoProofStyle.mint, size: 58)
+                Text("No matches with these filters")
+                    .font(.title2.bold())
+                Text("Your library is already lean by this definition. Try a younger age or a smaller file size.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 380)
-                Button("Edit filters") { stage = .configuring }
+                    .frame(maxWidth: 440)
+                Button("Adjust filters") { stage = .configuring }
+                    .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 0) {
-                CandidateGridView(
-                    candidates: candidates,
-                    deselected: $deselected
-                )
-                Divider()
-                resultsFooter
+                resultToolbar
+                CandidateGridView(candidates: candidates, deselected: $deselected)
+                resultFooter
             }
         }
     }
 
-    private var resultsFooter: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Button("Edit filters") { stage = .configuring }
-                Button("Select all") { deselected.removeAll() }
-                    .disabled(deselected.isEmpty)
-                Button("Deselect all") {
-                    deselected = Set(candidates.map(\.id))
-                }
-                .disabled(deselected.count == candidates.count)
-                Spacer()
-            }
-
-            HStack(spacing: 8) {
-                Text("Album name")
+    private var resultToolbar: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(candidates.count) candidates found")
                     .font(.headline)
-                TextField("PhotoProof candidates", text: $albumName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 320)
-                Spacer()
-                Button {
-                    Task { await createAlbum() }
-                } label: {
-                    Label(createButtonTitle, systemImage: "plus.rectangle.on.folder")
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(selectedCandidates.isEmpty)
+                Text("Click any item to keep it out of this cleanup.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.red)
+            Spacer()
+
+            Button("Adjust filters") { stage = .configuring }
+            Button(deselected.isEmpty ? "Deselect all" : "Select all") {
+                if deselected.isEmpty {
+                    deselected = Set(candidates.map(\.id))
+                } else {
+                    deselected.removeAll()
+                }
             }
         }
-        .padding(14)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
     }
 
-    private var createButtonTitle: String {
-        let n = selectedCandidates.count
-        return "Create album with \(n) item\(n == 1 ? "" : "s")"
+    private var resultFooter: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(selectedCandidates.count) selected")
+                    .font(.headline)
+                Text("\(formatBytes(selectedBytes)) · album name generated automatically")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await createAlbumAndVerify() }
+            } label: {
+                Label("Create album & verify", systemImage: "checkmark.shield")
+                    .font(.headline)
+                    .padding(.horizontal, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(PhotoProofStyle.accent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(selectedCandidates.isEmpty)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     private var creatingView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 22) {
             ProgressView()
-            Text("Creating album in Photos…")
-                .foregroundStyle(.secondary)
+                .controlSize(.large)
+            VStack(spacing: 6) {
+                Text("Building your cleanup album")
+                    .font(.title2.bold())
+                Text("Photos is collecting \(selectedCandidates.count) selected items. Verification starts next.")
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                ProofPill(title: "ALBUM", systemName: "rectangle.stack.badge.plus", color: PhotoProofStyle.cyan)
+                Image(systemName: "arrow.right").foregroundStyle(.tertiary)
+                ProofPill(title: "VERIFY", systemName: "checkmark.shield", color: PhotoProofStyle.mint)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
     }
-
-    private func doneView(count: Int) -> some View {
-        VStack(spacing: 14) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.green)
-            Text("Album created.")
-                .font(.title2.bold())
-            Text("\(count) item\(count == 1 ? "" : "s") added. Click Done to return to the main screen — the new album is already selected for verification.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 460)
-            Spacer()
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Actions
 
     private var selectedCandidates: [Candidate] {
         candidates.filter { !deselected.contains($0.id) }
     }
 
+    private var selectedBytes: Int64 {
+        selectedCandidates.reduce(0) { $0 + $1.totalSizeBytes }
+    }
+
+    private var searchFraction: Double {
+        guard total > 0 else { return 0 }
+        return min(1, Double(processed) / Double(total))
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .font(.callout)
+            .foregroundStyle(.red)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private func runSearch() {
-        error = nil
+        errorMessage = nil
         candidates = []
         deselected = []
         processed = 0
         total = 0
         stage = .searching
 
-        let ageUnit = CandidateFilter.AgeUnit(rawValue: ageUnitRaw) ?? .years
-        let sizeUnit = CandidateFilter.SizeUnit(rawValue: sizeUnitRaw) ?? .megabytes
         let filter = CandidateFilter(
             minAge: minAge,
-            ageUnit: ageUnit,
+            ageUnit: CandidateFilter.AgeUnit(rawValue: ageUnitRaw) ?? .years,
             minSize: minSize,
-            sizeUnit: sizeUnit,
-            mediaType: mediaType,
+            sizeUnit: CandidateFilter.SizeUnit(rawValue: sizeUnitRaw) ?? .megabytes,
+            mediaType: CandidateFilter.MediaTypeFilter(rawValue: mediaTypeRaw) ?? .all,
             skipFavorites: skipFavorites,
             skipHidden: skipHidden
         )
 
         searchTask?.cancel()
         searchTask = Task { @MainActor in
-            let results = await CandidateSearch.search(filter: filter) { p, t in
-                self.processed = p
-                self.total = t
+            let results = await CandidateSearch.search(filter: filter) { processed, total in
+                self.processed = processed
+                self.total = total
             }
-            self.candidates = results.sorted { $0.totalSizeBytes > $1.totalSizeBytes }
-            self.stage = .results
+            guard !Task.isCancelled else { return }
+            candidates = results.sorted { $0.totalSizeBytes > $1.totalSizeBytes }
+            stage = .results
         }
     }
 
-    private func createAlbum() async {
+    private func createAlbumAndVerify() async {
         let chosen = selectedCandidates
         guard !chosen.isEmpty else { return }
+
         stage = .creating
-        error = nil
+        errorMessage = nil
+        let albumTitle = automaticAlbumName()
+
         do {
-            let id = try await CandidateAlbum.create(
-                title: albumName,
+            let albumID = try await CandidateAlbum.create(
+                title: albumTitle,
                 assetLocalIDs: chosen.map(\.id)
             )
-            stage = .done(
-                albumName: albumName.isEmpty ? "PhotoProof candidates" : albumName,
-                count: chosen.count,
-                albumID: id
+            onAlbumCreated(albumID)
+
+            let photoCount = chosen.filter { $0.kind == .photo || $0.kind == .livePhoto }.count
+            let videoCount = chosen.filter { $0.kind == .video }.count
+            let album = AlbumSummary(
+                id: albumID,
+                title: albumTitle,
+                photoCount: photoCount,
+                videoCount: videoCount,
+                assetCount: chosen.count,
+                isDeletable: true
             )
-        } catch let e as CandidateAlbumError {
-            error = e.errorDescription
+            let run = VerificationRun(album: album, appState: appState)
+            verificationRun = run
+            run.start()
+        } catch let error as CandidateAlbumError {
+            errorMessage = error.errorDescription
             stage = .results
         } catch {
-            self.error = error.localizedDescription
+            errorMessage = error.localizedDescription
             stage = .results
         }
     }
 }
 
-// MARK: - Candidate grid
+private struct FinderStep: View {
+    enum State {
+        case pending
+        case active
+        case complete
+    }
+
+    let title: String
+    let systemName: String
+    let state: State
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: state == .complete ? "checkmark" : systemName)
+                .font(.caption.bold())
+                .frame(width: 28, height: 28)
+                .background(stepColor.opacity(0.13), in: Circle())
+                .foregroundStyle(stepColor)
+            Text(title)
+                .font(.callout.weight(state == .active ? .bold : .medium))
+                .foregroundStyle(state == .pending ? .secondary : .primary)
+        }
+    }
+
+    private var stepColor: Color {
+        switch state {
+        case .pending: return .secondary
+        case .active: return PhotoProofStyle.accent
+        case .complete: return PhotoProofStyle.mint
+        }
+    }
+}
+
+private struct FinderStepLine: View {
+    let isComplete: Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(isComplete ? PhotoProofStyle.mint.opacity(0.7) : Color.primary.opacity(0.10))
+            .frame(height: 2)
+            .frame(maxWidth: 90)
+            .padding(.horizontal, 10)
+    }
+}
+
+private struct ProtectionToggle: View {
+    let title: String
+    let detail: String
+    let systemName: String
+    let color: Color
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            HStack(spacing: 10) {
+                Image(systemName: systemName)
+                    .foregroundStyle(color)
+                    .frame(width: 30, height: 30)
+                    .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.callout.bold())
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
 
 private struct CandidateGridView: View {
     let candidates: [Candidate]
     @Binding var deselected: Set<String>
 
-    private let columns = [GridItem(.adaptive(minimum: 130, maximum: 170), spacing: 12)]
+    private let columns = Array(
+        repeating: GridItem(.fixed(160), spacing: 14),
+        count: 4
+    )
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(candidates) { c in
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(candidates) { candidate in
                     CandidateCell(
-                        candidate: c,
-                        isSelected: !deselected.contains(c.id)
+                        candidate: candidate,
+                        isSelected: !deselected.contains(candidate.id)
                     )
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if deselected.contains(c.id) {
-                            deselected.remove(c.id)
+                        if deselected.contains(candidate.id) {
+                            deselected.remove(candidate.id)
                         } else {
-                            deselected.insert(c.id)
+                            deselected.insert(candidate.id)
                         }
                     }
                 }
             }
-            .padding(14)
+            .padding(22)
         }
     }
 }
@@ -418,63 +649,64 @@ private struct CandidateCell: View {
 
     @State private var thumbnail: NSImage?
 
-    private let cellSize: CGFloat = 120
-
     var body: some View {
-        VStack(spacing: 4) {
-            ZStack(alignment: .topLeading) {
-                Color.secondary.opacity(0.12)
-                if let t = thumbnail {
-                    Image(nsImage: t)
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                Color.secondary.opacity(0.10)
+                if let thumbnail {
+                    Image(nsImage: thumbnail)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                 } else {
                     ProgressView().controlSize(.small)
                 }
-                if let badge = badgeIcon {
-                    Image(systemName: badge)
-                        .font(.caption)
-                        .foregroundStyle(.white)
-                        .padding(5)
-                        .background(.black.opacity(0.55))
-                        .clipShape(Circle())
-                        .padding(4)
-                        .frame(maxWidth: .infinity, alignment: .topTrailing)
+
+                HStack(spacing: 5) {
+                    if let badgeIcon {
+                        Image(systemName: badgeIcon)
+                    }
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                 }
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(isSelected ? Color.accentColor : .white.opacity(0.7))
-                    .background(isSelected ? Color.white : Color.black.opacity(0.35))
-                    .clipShape(Circle())
-                    .padding(4)
+                .font(.callout.bold())
+                .foregroundStyle(.white)
+                .padding(7)
+                .background(.black.opacity(0.42), in: Capsule())
+                .padding(8)
             }
-            .frame(width: cellSize, height: cellSize)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
-            )
-            .opacity(isSelected ? 1.0 : 0.55)
+            .frame(width: 142, height: 138)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isSelected ? PhotoProofStyle.accent : Color.clear, lineWidth: 3)
+            }
+            .opacity(isSelected ? 1 : 0.45)
 
             Text(candidate.displayFilename)
-                .font(.caption)
+                .font(.callout.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: cellSize)
+                .frame(width: 142, alignment: .leading)
 
-            HStack(spacing: 4) {
+            HStack {
                 Text(formatBytes(candidate.totalSizeBytes))
+                    .fontWeight(.semibold)
+                Spacer()
                 if let date = candidate.creationDate {
-                    Text("·")
                     Text(date, format: .dateTime.year())
                 }
             }
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(.secondary)
-            .frame(maxWidth: cellSize)
+            .frame(width: 142)
         }
+        .padding(9)
+        .frame(width: 160)
+        .background(
+            isSelected ? PhotoProofStyle.accent.opacity(0.055) : Color.primary.opacity(0.025),
+            in: RoundedRectangle(cornerRadius: 17)
+        )
         .task(id: candidate.id) {
-            thumbnail = await AssetThumbnailer.shared.thumbnail(for: candidate.id, points: cellSize)
+            thumbnail = await AssetThumbnailer.shared.thumbnail(for: candidate.id, points: 180)
         }
     }
 
@@ -487,14 +719,22 @@ private struct CandidateCell: View {
     }
 }
 
-// MARK: - Helpers
-
-private func defaultAlbumName() -> String {
-    let f = DateFormatter()
-    f.dateFormat = "yyyy-MM-dd"
-    return "PhotoProof – \(f.string(from: Date()))"
+private func automaticAlbumName() -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd HH.mm"
+    return "PhotoProof Cleanup - \(formatter.string(from: Date()))"
 }
 
-private func formatBytes(_ b: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
+private func formatBytes(_ bytes: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+}
+
+private extension CandidateFilter.MediaTypeFilter {
+    var shortLabel: String {
+        switch self {
+        case .all: return "Photos & Videos"
+        case .photos: return "Photos"
+        case .videos: return "Videos"
+        }
+    }
 }

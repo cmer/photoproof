@@ -1,20 +1,18 @@
 // SettingsView.swift
-// Configure the Immich server URL and API key. Save is gated behind a
-// successful Test Connection so the user never persists credentials that
-// don't actually work.
+// Configures and validates the read-only Immich connection before saving it.
 
 import SwiftUI
 
 struct SettingsView: View {
-    @EnvironmentObject var appState: AppState
+    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     let isFirstLaunch: Bool
 
-    @State private var url: String = ""
-    @State private var apiKey: String = ""
-    @State private var hasExistingKey: Bool = false
-    @State private var enteringNewKey: Bool = false
+    @State private var url = ""
+    @State private var apiKey = ""
+    @State private var hasExistingKey = false
+    @State private var enteringNewKey = false
     @State private var testState: TestState = .idle
 
     enum TestState: Equatable {
@@ -25,160 +23,229 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            header
+        ZStack {
+            PhotoProofBackdrop()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Immich Server URL")
-                    .font(.headline)
-                TextField("https://immich.example.com", text: $url)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .onChange(of: url) { _, _ in invalidateTest() }
-                Text("The base URL of your Immich server. A trailing /api or / is fine — we'll clean it up.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            VStack(spacing: 0) {
+                header
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("API Key")
-                    .font(.headline)
-                if hasExistingKey && !enteringNewKey {
-                    HStack {
-                        Text("•••••••••• (saved in your keychain)")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Replace key") {
-                            enteringNewKey = true
-                            apiKey = ""
-                            invalidateTest()
-                        }
-                    }
-                } else {
-                    SecureField("API key from Immich → Account Settings → API Keys", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: apiKey) { _, _ in invalidateTest() }
+                VStack(alignment: .leading, spacing: 12) {
+                    serverCard
+                    keyCard
+                    connectionCard
                 }
-                requiredPermissionsHint
-            }
+                .frame(maxWidth: 660)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-            HStack(alignment: .center, spacing: 12) {
-                Button {
-                    Task { await testConnection() }
-                } label: {
-                    HStack(spacing: 6) {
-                        if testState == .running {
-                            ProgressView().controlSize(.small)
-                        }
-                        Text("Test Connection")
-                    }
-                }
-                .disabled(!canTest || testState == .running)
-                .keyboardShortcut("t", modifiers: .command)
-
-                testStatusView
-            }
-
-            Spacer(minLength: 0)
-
-            HStack {
-                if !isFirstLaunch {
-                    Button("Cancel") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                }
-                Spacer()
-                Button(isFirstLaunch ? "Get Started" : "Save") { save() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canSave)
+                footer
             }
         }
-        .padding(28)
-        .frame(minWidth: 560, minHeight: 380)
-        .onAppear {
-            url = appState.serverURL
-            hasExistingKey = KeychainStore.shared.exists()
-            enteringNewKey = !hasExistingKey
-            if let user = appState.connectedUser, !appState.serverURL.isEmpty, hasExistingKey {
-                testState = .success(ImmichUser(id: user.id, email: user.email, name: user.name))
-            }
-        }
+        .frame(minWidth: 640, minHeight: 560)
+        .onAppear(perform: loadCurrentSettings)
     }
 
     private var header: some View {
-        HStack {
-            Image(systemName: "server.rack")
-                .font(.title)
-                .foregroundStyle(.tint)
+        HStack(spacing: 14) {
+            ProofIcon(systemName: "server.rack", size: 38)
             VStack(alignment: .leading, spacing: 2) {
-                Text(isFirstLaunch ? "Connect to Immich" : "Settings")
+                Text(isFirstLaunch ? "Connect to Immich" : "Immich Connection")
                     .font(.title2.bold())
                 Text(isFirstLaunch
-                     ? "Tell PhotoProof where your Immich library lives."
-                     : "Update your Immich server connection.")
+                     ? "The final setup step before your first cleanup."
+                     : "Manage the server PhotoProof uses for verification.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if !isFirstLaunch, let user = appState.connectedUser {
+                ProofPill(
+                    title: user.name.isEmpty ? user.email : user.name,
+                    systemName: "checkmark.circle.fill",
+                    color: PhotoProofStyle.mint
+                )
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
         }
     }
 
-    private var requiredPermissionsHint: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.shield")
-                    .foregroundStyle(.secondary)
-                Text("When you create the key in Immich, grant these permissions:")
+    private var serverCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingTitle(
+                icon: "network",
+                title: "Server address",
+                detail: "Your self-hosted Immich URL"
+            )
+            TextField("https://immich.example.com", text: $url)
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+                .disableAutocorrection(true)
+                .onChange(of: url) { _, _ in invalidateTest() }
+            Text("A trailing /api or slash is fine. PhotoProof normalizes it before connecting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .proofSurface(padding: 14, cornerRadius: 16)
+    }
+
+    private var keyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingTitle(
+                icon: "key.fill",
+                title: "API key",
+                detail: "Stored securely in your macOS Keychain"
+            )
+
+            if hasExistingKey && !enteringNewKey {
+                HStack {
+                    Label("Saved key", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(PhotoProofStyle.mint)
+                    Spacer()
+                    Button("Replace key") {
+                        enteringNewKey = true
+                        apiKey = ""
+                        invalidateTest()
+                    }
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                SecureField("Paste your Immich API key", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: apiKey) { _, _ in invalidateTest() }
+            }
+
+            HStack(spacing: 7) {
+                Text("Required scopes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 6) {
                 ForEach(["user.read", "asset.read", "asset.upload"], id: \.self) { scope in
                     Text(scope)
-                        .font(.system(.caption, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .font(.caption2.monospaced().weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(PhotoProofStyle.accent.opacity(0.10), in: Capsule())
                 }
             }
-            Text("These let PhotoProof read your account, check whether a photo is in Immich, and confirm it isn't in Immich's trash. PhotoProof never creates, modifies, or deletes anything in Immich.")
+
+            Text("These permissions read your account and check asset hashes. PhotoProof never creates, changes, or deletes anything in Immich.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.top, 4)
+        .proofSurface(padding: 14, cornerRadius: 16)
+    }
+
+    private var connectionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                settingTitle(
+                    icon: "bolt.horizontal.circle",
+                    title: "Connection check",
+                    detail: "Credentials must work before they can be saved"
+                )
+                Spacer()
+                Button {
+                    Task { await testConnection() }
+                } label: {
+                    HStack(spacing: 7) {
+                        if testState == .running {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text("Test connection")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PhotoProofStyle.accent)
+                .disabled(!canTest || testState == .running)
+                .keyboardShortcut("t", modifiers: .command)
+            }
+
+            testStatusView
+        }
+        .proofSurface(padding: 14, cornerRadius: 16)
+    }
+
+    private func settingTitle(icon: String, title: String, detail: String) -> some View {
+        HStack(spacing: 10) {
+            ProofIcon(systemName: icon, size: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.headline)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder
     private var testStatusView: some View {
         switch testState {
-        case .idle, .running:
-            EmptyView()
+        case .idle:
+            Label("Not tested yet", systemImage: "circle.dashed")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .running:
+            Text("Asking Immich for the connected user…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         case .success(let user):
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("Connected as \(user.name.isEmpty ? user.email : user.name)")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .font(.callout)
+            Label(
+                "Connected as \(user.name.isEmpty ? user.email : user.name)",
+                systemImage: "checkmark.circle.fill"
+            )
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(PhotoProofStyle.mint)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PhotoProofStyle.mint.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
         case .failed(let message):
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "xmark.octagon.fill")
-                    .foregroundStyle(.red)
-                Text(message)
+            Label(message, systemImage: "xmark.octagon.fill")
+                .font(.callout)
+                .foregroundStyle(.red)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            if !isFirstLaunch {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            } else {
+                Label("Step 2 of 2", systemImage: "checkmark.circle")
                     .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(.secondary)
             }
+            Spacer()
+            Button(isFirstLaunch ? "Open PhotoProof" : "Save connection") {
+                save()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(PhotoProofStyle.accent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canSave)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
         }
     }
 
     private var canTest: Bool {
         guard ImmichClient.normalize(url) != nil else { return false }
-        if enteringNewKey { return !apiKey.isEmpty }
-        return hasExistingKey
+        return enteringNewKey ? !apiKey.isEmpty : hasExistingKey
     }
 
     private var canSave: Bool {
@@ -186,18 +253,30 @@ struct SettingsView: View {
         return false
     }
 
+    private func loadCurrentSettings() {
+        url = appState.serverURL
+        hasExistingKey = KeychainStore.shared.exists()
+        enteringNewKey = !hasExistingKey
+        if let user = appState.connectedUser, !appState.serverURL.isEmpty, hasExistingKey {
+            testState = .success(ImmichUser(id: user.id, email: user.email, name: user.name))
+        }
+    }
+
     private func invalidateTest() {
         switch testState {
-        case .success, .failed: testState = .idle
-        default: break
+        case .success, .failed:
+            testState = .idle
+        default:
+            break
         }
     }
 
     private func testConnection() async {
         guard let normalized = ImmichClient.normalize(url) else {
-            testState = .failed("That URL doesn't look right. It should be like https://immich.example.com.")
+            testState = .failed("Enter a URL like https://immich.example.com.")
             return
         }
+
         let key: String
         if enteringNewKey {
             key = apiKey
@@ -205,7 +284,7 @@ struct SettingsView: View {
             do {
                 key = try KeychainStore.shared.read()
             } catch {
-                testState = .failed("Couldn't read the saved API key from your keychain.")
+                testState = .failed("PhotoProof could not read the saved key from Keychain.")
                 return
             }
         }
@@ -213,24 +292,25 @@ struct SettingsView: View {
         testState = .running
         let client = ImmichClient(baseURL: normalized, apiKey: key)
         do {
-            let user = try await client.ping()
-            testState = .success(user)
-        } catch let immichError as ImmichError {
-            testState = .failed(immichError.errorDescription ?? "Unknown error.")
+            testState = .success(try await client.ping())
+        } catch let error as ImmichError {
+            testState = .failed(error.errorDescription ?? "Immich returned an unknown error.")
         } catch {
             testState = .failed(error.localizedDescription)
         }
     }
 
     private func save() {
-        guard case .success(let user) = testState else { return }
-        guard let normalized = ImmichClient.normalize(url) else { return }
+        guard case .success(let user) = testState,
+              let normalized = ImmichClient.normalize(url) else {
+            return
+        }
 
         if enteringNewKey {
             do {
                 try KeychainStore.shared.save(apiKey)
             } catch {
-                testState = .failed("Couldn't save the API key: \(error.localizedDescription)")
+                testState = .failed("Could not save the API key: \(error.localizedDescription)")
                 return
             }
         }

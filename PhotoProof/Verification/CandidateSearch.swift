@@ -176,8 +176,8 @@ enum CandidateAlbumError: Error, LocalizedError {
 
 enum CandidateAlbum {
     /// Create a new user album with the given title and add the given assets.
-    /// Returns the new album's local identifier so callers can pre-select it
-    /// in the main picker.
+    /// Returns the new album's local identifier so callers can start
+    /// verification immediately and remember it for later.
     static func create(title: String, assetLocalIDs: [String]) async throws -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalTitle = trimmed.isEmpty ? "PhotoProof candidates" : trimmed
