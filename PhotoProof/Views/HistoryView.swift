@@ -13,22 +13,26 @@ struct HistoryView: View {
     @State private var selectedID: RunLogEntry.ID?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-            Divider()
-            footer
+        ZStack {
+            PhotoProofBackdrop()
+
+            VStack(spacing: 0) {
+                header
+                content
+                    .padding(20)
+                footer
+            }
         }
-        .frame(minWidth: 560, minHeight: 360)
+        .frame(minWidth: 680, minHeight: 460)
         .onAppear { reload() }
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 14) {
+            ProofIcon(systemName: "clock.arrow.circlepath", size: 42)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Verification History").font(.title3.bold())
-                Text("CSV logs of each run, written before any deletion happens.")
+                Text("Verification History").font(.title2.bold())
+                Text("Audit logs written before any item moves to Recently Deleted.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -41,7 +45,12 @@ struct HistoryView: View {
             .help("Refresh")
             .accessibilityLabel("Refresh history")
         }
-        .padding(16)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     @ViewBuilder
@@ -68,16 +77,20 @@ struct HistoryView: View {
                 }
                 .width(min: 70, ideal: 90)
             }
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+            }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text("No verification logs yet.")
-                .foregroundStyle(.secondary)
+        VStack(spacing: 12) {
+            ProofIcon(systemName: "doc.text.magnifyingglass", color: .secondary, size: 56)
+            Text("No audit logs yet")
+                .font(.title3.bold())
             Text("PhotoProof saves a CSV here every time you move items to Recently Deleted.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -85,6 +98,7 @@ struct HistoryView: View {
                 .frame(maxWidth: 380)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .proofSurface()
     }
 
     private var footer: some View {
@@ -119,7 +133,12 @@ struct HistoryView: View {
             Button("Done") { dismiss() }
                 .keyboardShortcut(.defaultAction)
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
     }
 
     private var selectedURL: URL? {

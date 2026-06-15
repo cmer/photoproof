@@ -12,10 +12,9 @@ struct PhotoProofApp: App {
         WindowGroup("PhotoProof") {
             RootView()
                 .environmentObject(appState)
-                .frame(minWidth: 720, minHeight: 520)
+                .frame(minWidth: 900, minHeight: 650)
                 .sheet(isPresented: $appState.showHistory) {
                     HistoryView()
-                        .frame(minWidth: 560, minHeight: 360)
                 }
                 .sheet(isPresented: $appState.showEmptyAlbums) {
                     EmptyAlbumsView()
