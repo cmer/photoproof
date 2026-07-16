@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 # Build PhotoProof in Release configuration and copy the bundle to ./build/.
 #
-# This produces an optimised binary suitable for personal/local use. For
-# distribution to other machines you'd additionally need to:
-#   - sign with a Developer ID certificate
-#   - notarize via `xcrun notarytool submit`
-#   - staple the ticket with `xcrun stapler staple`
-# That flow is out of scope here — this script just gives you a fast, runnable
-# release-mode build.
+# This produces an unsigned optimized bundle suitable for local use and as the
+# input to release.sh, which signs, notarizes, staples, and packages it.
 
 set -euo pipefail
 

@@ -30,9 +30,8 @@ xcodebuild -project PhotoProof.xcodeproj -scheme PhotoProof \
     -configuration Debug build CODE_SIGNING_ALLOWED=NO
 ```
 
-`CODE_SIGNING_ALLOWED=NO` is fine for local builds — the app uses ad-hoc
-signing. Distribution to other Macs would require Developer ID signing +
-notarization (out of scope for this project).
+`CODE_SIGNING_ALLOWED=NO` is fine for local builds. Public releases are signed
+with Developer ID and notarized by `release.sh`.
 
 If `xcodebuild` errors with `IDESimulatorFoundation` plugin failures,
 run `sudo xcodebuild -runFirstLaunch` once.
@@ -52,12 +51,35 @@ The script:
    bumps `CURRENT_PROJECT_VERSION` (build number).
 3. Regenerates `CHANGELOG.md` from git history via `git-cliff`.
 4. Commits the bump as `chore(release): <version>` and tags `v<version>`.
-5. Runs `build-prod.sh`, zips the .app to `build/PhotoProof-<version>.zip`.
+5. Runs `build-prod.sh`, signs with Developer ID, notarizes, staples, and zips
+   the app to `build/PhotoProof-<version>.zip`.
 6. Pushes the commit and tag to `origin`.
 7. Creates a GitHub release with the new CHANGELOG.md section as release notes
-   and the zip attached.
+   and the zip attached, then updates the Homebrew cask in `cmer/homebrew-tap`.
 
-Tooling needed (one-time): `brew install git-cliff` and `gh auth login`.
+The script discovers installed `Developer ID Application` identities, defaults
+to the `bloomworks-notary` keychain profile, shows the release configuration,
+and asks before making release changes. For unattended use, set
+`DEVELOPER_ID_APPLICATION`, `NOTARY_PROFILE`, and
+`SKIP_RELEASE_CONFIRMATION=1`.
+
+The cask update is best-effort because the GitHub release exists by that point.
+On the first release it copies `Casks/photoproof.rb` into the tap; later
+releases rewrite its version and sha256. Set `SKIP_CASK_UPDATE=1` to skip it,
+or override `TAP_REPO` and `CASK_NAME`.
+
+One-time setup:
+
+```sh
+brew install git-cliff gh
+gh auth login
+xcrun notarytool store-credentials bloomworks-notary \
+  --apple-id you@example.com \
+  --team-id TEAMID
+```
+
+Install a Developer ID Application certificate in the login keychain and
+confirm it with `security find-identity -v -p codesigning`.
 
 ## Commit conventions
 

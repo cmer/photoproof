@@ -85,21 +85,13 @@ PhotoProof only reads from Immich. It never creates, modifies, or deletes anythi
 
 ## Install
 
-Download the latest `PhotoProof-<version>.zip` from the [Releases page](https://github.com/cmer/photoproof/releases), unzip it, and drag `PhotoProof.app` into `/Applications`.
-
-### First-launch Gatekeeper warning
-
-PhotoProof is **ad-hoc signed**, not notarized by Apple. When you download a release through a browser, macOS adds a quarantine attribute and Gatekeeper refuses to launch the app — usually with the misleading message *"PhotoProof is damaged and can't be opened. You should move it to the Trash."* The app isn't actually damaged. macOS just won't run an ad-hoc-signed download without you explicitly approving it.
-
-**Fix**: open Terminal and strip the quarantine attribute. Replace the path with wherever your `.app` lives (`~/Downloads/PhotoProof.app`, `/Applications/PhotoProof.app`, etc.):
+Install the signed and notarized app with Homebrew:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/PhotoProof.app
+brew install --cask cmer/tap/photoproof
 ```
 
-Then double-click the app. It'll launch normally and Gatekeeper won't bother you again.
-
-> Why doesn't right-click → Open work? That flow is for apps signed with a real Apple Developer ID but not notarized. Ad-hoc signing has no Developer ID to evaluate, so Gatekeeper doesn't offer the bypass — the `xattr` path is the only one. Building from source (see below) avoids the issue entirely, since locally compiled apps don't carry the quarantine flag.
+You can also download `PhotoProof-<version>.zip` from the [Releases page](https://github.com/cmer/photoproof/releases), unzip it, and drag `PhotoProof.app` into `/Applications`.
 
 ---
 
