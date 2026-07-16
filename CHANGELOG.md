@@ -6,13 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project follows [Semantic Versioning](https://semver.org/) and
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [1.2.0] — 2026-06-15
+## [1.3.0] — 2026-07-16
 
-### Features
-- Redesign PhotoProof around a streamlined find, review, verify, and delete workflow
-- Create cleanup albums automatically and begin Immich verification immediately
-- Modernize onboarding, settings, verification results, history, and empty-album management
-- Keep verification of an existing Photos album available as a secondary action
+### Build
+- Add signed notarized Homebrew releases
+
+
+### Other
+- [codex] Redesign the cleanup workflow (#2)
 
 ## [1.1.0] — 2026-06-10
 
@@ -34,4 +35,5 @@ and this project follows [Semantic Versioning](https://semver.org/) and
 ### Other
 - Add build scripts for dev and release
 - Initial commit: PhotoProof macOS app
+
 
