@@ -194,3 +194,5 @@ view types; tests can come later.
   matches its semantics — batch sizes (200), retry/backoff (250ms / 1s / 4s,
   3 attempts on transient errors), and the bulk-then-trash double-check.
 - Apple's PhotoKit docs are authoritative for asset/resource handling.
+
+End any turn that reports on long-running or delegated work with a short status: **Goal**, **Done**, **Next**, **Needs you** (or "nothing").
